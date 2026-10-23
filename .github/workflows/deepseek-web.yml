@@ -1,0 +1,40 @@
+name: DeepSeek Web integration tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/deepseek-web/**'
+      - '.github/workflows/deepseek-web.yml'
+  pull_request:
+    paths:
+      - 'integrations/deepseek-web/**'
+      - '.github/workflows/deepseek-web.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    name: Node ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Bridge and policy tests
+        working-directory: integrations/deepseek-web/bridge
+        run: npm test
+      - name: Validate extension syntax and manifest
+        working-directory: integrations/deepseek-web
+        run: |
+          node --check bridge/server.js
+          node --check extension/background.js
+          node --check extension/content.js
+          node --check extension/popup.js
+          node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"

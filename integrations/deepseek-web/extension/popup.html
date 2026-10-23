@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font:13px system-ui,Arial,sans-serif;margin:16px;width:280px;color:#17212c}
+h2{font-size:15px;margin:0 0 12px}
+label{display:block;margin:10px 0 5px}
+input{width:100%;box-sizing:border-box;padding:8px;border:1px solid #adb5bd;border-radius:5px}
+button{padding:8px 14px;margin-top:10px;background:#215fd2;color:white;border:0;border-radius:5px;cursor:pointer}
+p{color:#586677;line-height:1.55}
+#status{white-space:pre-wrap;font-size:12px}
+</style>
+</head>
+<body>
+<h2>AgentDock 本地配对</h2>
+<p>配对令牌只保存在浏览器扩展内，切勿发到 DeepSeek 对话。</p>
+<label for="token">64 位十六进制令牌</label>
+<input id="token" type="password" autocomplete="off" spellcheck="false">
+<button id="save">保存配对</button>
+<button id="check">连接测试</button>
+<p id="status" role="status">尚未检查</p>
+<script src="popup.js"></script>
+</body>
+</html>
