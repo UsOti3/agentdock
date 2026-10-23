@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { MCPClient } = require("./mcp");
+const { StdioMCPClient } = require("./stdio");
+const { searchCandidates } = require("./search-policy");
 const { HandoffManager } = require("./handoff");
 const { PolicyError, validateConfig, safePath, resolveWorkspace, isBlockedRelative, textForBrowser } = require("./policy");
 
@@ -44,9 +46,9 @@ function scrubNativeResult(value) {
 
 function createBridge(rawConfig, dependencies = {}) {
   const config = validateConfig(rawConfig);
-  const mcp = dependencies.mcp || new MCPClient(
-    config.upstreamUrl, process.env.AGENTDOCK_WEB_UPSTREAM_TOKEN || ""
-  );
+  const mcp = dependencies.mcp || (config.transport === "stdio" ? new StdioMCPClient({
+    executable: config.agentDockExecutable, stateDir: config.stateDir, workspace: config.allowedRoots[0],
+  }) : new MCPClient(config.upstreamUrl, process.env.AGENTDOCK_WEB_UPSTREAM_TOKEN || ""));
   const handoff = new HandoffManager(config, mcp);
   const auditFile = dependencies.auditFile === undefined ? path.join(__dirname, "audit.jsonl") : dependencies.auditFile;
   let auditFailureReported = false;
@@ -91,15 +93,13 @@ function createBridge(rawConfig, dependencies = {}) {
         path: p, start_line: start, end_line: start + lines - 1, max_bytes: 12000,
       });
     } else if (tool === "ad_search") {
-      const p = safePath(config, workspace, args.path || ".", true);
       const query = stringArg(args.query, 120, "query");
-      result = await mcp.call("search_text", {
-        path: p, query, regex: false, max_results: 20,
-        include_hidden: false, include_ignored: false,
-        exclude_globs: ["**/.git/**", "**/.env*", "**/node_modules/**",
-          "**/.ssh/**", "**/.agentdock/**", "**/credentials*",
-          "**/*secret*", "**/*token*", "**/*.pem", "**/*.key"],
-      });
+      const approved = searchCandidates(config, workspace, args.path || ".");
+      result = approved.files.length ? await mcp.call("search_text", {
+        path: approved.base, query, regex: false, max_results: 20,
+        include_hidden: false, include_ignored: false, include_globs: approved.files,
+      }) : { matches: [], count: 0 };
+      result.policyTruncated = approved.truncated;
     } else if (tool === "ad_edit") {
       if (!config.allowWrites) throw new PolicyError("DISABLED", "Writes are disabled by local config");
       const p = safePath(config, workspace, stringArg(args.path, 700, "path"));
@@ -143,12 +143,20 @@ function createBridge(rawConfig, dependencies = {}) {
     const pathname = new URL(req.url, "http://127.0.0.1").pathname;
     try {
       if (req.method === "GET" && pathname === "/health") {
+        if (typeof mcp.initialize === "function") await mcp.initialize();
         return send(res, 200, {
-          ok: true, service: "agentdock-deepseek-web", version: "0.1.0",
+          ok: true, service: "agentdock-deepseek-web", version: "0.2.0",
+          upstreamConnected: true, transport: config.transport,
           workspaces: config.allowedRoots.map((_, i) => "w" + i),
           allowWrites: config.allowWrites, allowHandoff: config.allowHandoff,
           backend: config.backend,
         });
+      }
+      if (req.method === "POST" && pathname === "/shutdown") {
+        await server.cleanup();
+        send(res, 200, { ok: true, stopping: true });
+        setImmediate(() => server.close());
+        return;
       }
       if (req.method === "GET" && pathname === "/tools") {
         return send(res, 200, { ok: true, tools: [
@@ -203,6 +211,15 @@ function createBridge(rawConfig, dependencies = {}) {
   });
   server.requestTimeout = 10000;
   server.headersTimeout = 8000;
+  let cleanup;
+  server.cleanup = () => {
+    if (!cleanup) cleanup = (async () => {
+      await handoff.shutdown();
+      if (typeof mcp.close === "function") await mcp.close();
+    })().catch((error) => { cleanup = null; throw error; });
+    return cleanup;
+  };
+  server.on("close", () => { void server.cleanup().catch(() => console.error("Executor closure not confirmed")); });
   return server;
 }
 
@@ -213,6 +230,9 @@ if (require.main === module) {
     process.exit(1);
   }
   const server = createBridge(JSON.parse(fs.readFileSync(file, "utf8")));
+  const stop = () => { void server.cleanup().then(() => server.close()).catch(() => console.error("Executor closure not confirmed; bridge remains open")); };
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
   server.listen(JSON.parse(fs.readFileSync(file, "utf8")).port || 18461, "127.0.0.1", () => {
     console.log("AgentDock DeepSeek bridge ready at http://127.0.0.1:" + server.address().port);
     console.log("This service is local-only. It will not change the existing AgentDock service.");

@@ -43,6 +43,9 @@
   shadow.append(style, panel);
   document.documentElement.appendChild(host);
 
+  shadow.addEventListener("click", (event) => {
+    if (!event.isTrusted) { event.stopImmediatePropagation(); event.preventDefault(); }
+  }, true);
   const get = (id) => shadow.getElementById(id);
   let candidate = null;
   let candidateKey = null;
@@ -119,7 +122,7 @@
       for (const node of document.querySelectorAll(s)) {
         if (node.closest("#agentdock-deepseek-host")) continue;
         const text = node.textContent || "";
-        if (text.includes(OPEN) && text.includes(CLOSE)) matches.push({ node, text });
+        if (text.trim()) matches.push({ node, text });
       }
     }
     if (!matches.length) return "";
@@ -158,7 +161,7 @@
         return;
       }
       candidate = extractCall(responseText);
-      if (!candidate) { preview("最新回复没有找到完整的 " + OPEN + " 工具请求。"); return; }
+      if (!candidate) { get("ad-execute").disabled = true; preview("最新回复没有找到完整的 " + OPEN + " 工具请求。"); return; }
       candidateKey = key;
       preview(JSON.stringify(candidate, null, 2));
       get("ad-execute").disabled = false;
@@ -194,7 +197,7 @@
     try {
       const { run } = await bridge("GET", "/runs/" + activeRunId);
       output(run);
-      if (!["starting", "running"].includes(run.status)) {
+      if (!["starting", "running", "cancelling"].includes(run.status)) {
         activeRunId = null;
         get("ad-poll").disabled = true;
         get("ad-cancel").disabled = true;
@@ -207,10 +210,11 @@
     try {
       const { run } = await bridge("POST", "/runs/" + activeRunId + "/cancel");
       output(run);
-      activeRunId = null;
-      get("ad-poll").disabled = true;
-      get("ad-cancel").disabled = true;
-      status("已提交停止请求。");
+      const stopped = !["starting", "running", "cancelling"].includes(run.status);
+      if (stopped) activeRunId = null;
+      get("ad-poll").disabled = stopped;
+      get("ad-cancel").disabled = stopped;
+      status(stopped ? "任务已经停止。" : "正在停止，请查询进度确认最终状态。");
     } catch (e) { status("停止失败：" + e.message); }
   });
   get("ad-copy").addEventListener("click", () => copy(get("ad-output").value));

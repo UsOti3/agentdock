@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const BLOCKED_PARTS = new Set([
-  ".git", ".ssh", ".aws", ".azure", ".gnupg", ".agentdock", ".codex",
+  "config.local.json", ".git", ".ssh", ".aws", ".azure", ".gnupg", ".agentdock", ".codex",
   "node_modules", ".npm", ".config", ".dsh", ".dsh-pro", ".venv",
 ]);
 const SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|id_(?:rsa|ed25519|ecdsa)|.*(?:credential|secret|token|password|private.?key).*|.*\.(?:pem|p12|pfx|key|kdbx))$/i;
@@ -36,7 +36,16 @@ function validateConfig(input) {
   }
   const backend = input.backend || "acp";
   if (backend !== "acp" && backend !== "dsh") throw new PolicyError("CONFIG", "Unknown handoff backend");
+  const transport = input.transport || "http";
+  if (!["http", "stdio"].includes(transport)) throw new PolicyError("CONFIG", "Invalid transport");
+  const stateDir = input.stateDir || path.join(require("node:os").homedir(), ".agentdock-deepseek-web", "runtime");
+  if (!path.isAbsolute(stateDir)) throw new PolicyError("CONFIG", "stateDir must be absolute");
+  const timeout = input.handoffTimeoutMs || 180000;
+  if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 900000) throw new PolicyError("CONFIG", "Invalid handoff timeout");
   return {
+    transport, stateDir, agentDockExecutable: input.agentDockExecutable || "",
+    dshScript: input.dshScript || "", dshElectron: input.dshElectron === true,
+    dshPatch: input.dshPatch || "", handoffTimeoutMs: timeout,
     port, token: input.token, allowedRoots: roots, upstreamUrl: upstream.href,
     allowWrites: input.allowWrites === true,
     allowHandoff: input.allowHandoff === true,
@@ -70,6 +79,12 @@ function safePath(config, workspace, relative, allowRoot = false) {
   const parts = relative.replace(/\\/g, "/").split("/");
   if (parts.some((s) => s === ".." || s === "")) throw new PolicyError("PATH", "Path traversal is forbidden");
   const cleanParts = parts.filter((s) => s !== ".");
+  if (cleanParts.some((s) => /[. ]$/.test(s) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(s))) {
+    throw new PolicyError("PATH", "Reserved or ambiguous path component");
+  }
+  if (fs.lstatSync(base).isSymbolicLink() || fs.realpathSync(base) !== base) {
+    throw new PolicyError("PATH", "Workspace root changed");
+  }
   if (!allowRoot && !cleanParts.length) throw new PolicyError("PATH", "File path required");
   if (isBlockedRelative(cleanParts.join("/"))) throw new PolicyError("PATH", "Sensitive path is blocked");
   const target = path.resolve(base, ...cleanParts);
@@ -81,7 +96,9 @@ function safePath(config, workspace, relative, allowRoot = false) {
   for (const component of cleanParts) {
     cursor = path.join(cursor, component);
     try {
-      if (fs.lstatSync(cursor).isSymbolicLink()) throw new PolicyError("PATH", "Symlinks and junctions are blocked");
+      const stat = fs.lstatSync(cursor);
+      if (stat.isSymbolicLink()) throw new PolicyError("PATH", "Symlinks and junctions are blocked");
+      if (stat.isFile() && stat.nlink > 1) throw new PolicyError("PATH", "Hard-linked files are blocked");
     } catch (err) {
       if (err instanceof PolicyError) throw err;
       if (err.code === "ENOENT") break;

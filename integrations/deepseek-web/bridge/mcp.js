@@ -20,7 +20,7 @@ class MCPClient {
     const response = await this.fetchImpl(this.url, {
       method: "POST", headers,
       body: JSON.stringify({ jsonrpc: "2.0", id: ++this.id, method, params }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs), redirect: "error", credentials: "omit",
     });
     if (!response.ok) throw new Error("AgentDock MCP HTTP " + response.status);
     if (!String(response.headers.get("content-type") || "").includes("application/json")) {
