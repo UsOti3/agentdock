@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "AgentDock for DeepSeek Web (Preview)",
+  "version": "0.2.0",
+  "description": "User-approved local AgentDock tools inside DeepSeek Web",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:18461/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AgentDock Pairing"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.deepseek.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

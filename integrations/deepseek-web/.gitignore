@@ -1,0 +1,5 @@
+bridge/config.local.json
+bridge/audit.jsonl
+bridge/.test-data/
+node_modules/
+*.log
